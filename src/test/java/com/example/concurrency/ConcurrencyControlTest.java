@@ -17,149 +17,195 @@ import com.example.concurrency.domain.Product;
 import com.example.concurrency.repository.ProductRepository;
 import com.example.concurrency.service.OptimisticLockService;
 import com.example.concurrency.service.PessimisticLockService;
+import com.example.concurrency.service.RedisLockService;
 
 @SpringBootTest
 class ConcurrencyControlTest {
-    
-    @Autowired
-    private ProductRepository productRepository;
-    
-    @Autowired
-    private OptimisticLockService optimisticLockService;
 
-    @Autowired
-    private PessimisticLockService pessimisticLockService;
-    
-    @AfterEach
-    void tearDown() {
-        productRepository.deleteAll();
-    }
-    
-    /**
-     * 동시성 제어 없음 - 실패 케이스
-     */
-    @Test
-    @DisplayName("동시성 제어 없음 - 100개 요청, 재고 100 -> 예상: 0, 실제: 90+ (race condition)")
-    void noLock() throws InterruptedException {
-        // Given
-        Product product = new Product("한정판 신발", 100);
-        productRepository.save(product);
+	@Autowired
+	private ProductRepository productRepository;
 
-        int threadCount = 100;
-        ExecutorService executorService = Executors.newFixedThreadPool(32);
-        CountDownLatch latch = new CountDownLatch(threadCount);
+	@Autowired
+	private OptimisticLockService optimisticLockService;
 
-        try {
-            // When
-            for (int i = 0; i < threadCount; i++) {
-                executorService.submit(() -> {
-                    try {
-                        Product p = productRepository.findById(product.getId()).orElseThrow();
-                        p.decreaseStock(1);
-                        productRepository.save(p);
-                    } finally {
-                        latch.countDown();
-                    }
-                });
-            }
+	@Autowired
+	private PessimisticLockService pessimisticLockService;
 
-            latch.await();
+	@Autowired
+	private RedisLockService redisLockService;
 
-            // Then
-            Product result = productRepository.findById(product.getId()).orElseThrow();
-            System.out.println("동시성 제어 없음 - 최종 재고: " + result.getStock());
-            assertThat(result.getStock()).isGreaterThan(0); // Race condition 발생
-        } finally {
-            executorService.shutdown();
-        }
-    }
-    
-    /**
-     * 낙관적 락 - 재시도 포함
-     */
-    @Test
-    @DisplayName("낙관적 락 - 100개 요청, 재고 100 -> 예상: 0")
-    void optimisticLock() throws InterruptedException {
-        // Given
-        Product product = new Product("한정판 신발", 100);
-        productRepository.save(product);
-
-        int threadCount = 100;
-        ExecutorService executorService = Executors.newFixedThreadPool(32);
-        CountDownLatch latch = new CountDownLatch(threadCount);
-        AtomicInteger successCount = new AtomicInteger(0);
-
-        try {
-            // When
-            long startTime = System.currentTimeMillis();
-
-            for (int i = 0; i < threadCount; i++) {
-                executorService.submit(() -> {
-                    try {
-                        optimisticLockService.decreaseStockWithRetry(product.getId(), 1);
-                        successCount.incrementAndGet();
-                    } catch (Exception e) {
-                        System.out.println("실패: " + e.getMessage());
-                    } finally {
-                        latch.countDown();
-                    }
-                });
-            }
-
-            latch.await();
-            long endTime = System.currentTimeMillis();
-
-            // Then
-            Product result = productRepository.findById(product.getId()).orElseThrow();
-            System.out.println("낙관적 락 - 최종 재고: " + result.getStock());
-            System.out.println("낙관적 락 - 성공 수: " + successCount.get());
-            System.out.println("낙관적 락 - 소요 시간: " + (endTime - startTime) + "ms");
-
-            assertThat(result.getStock()).isEqualTo(0);
-        } finally {
-            executorService.shutdown();
-        }
-    }
+	@AfterEach
+	void tearDown() {
+		productRepository.deleteAll();
+	}
 
 	/**
-  * 비관적 락
-  */
- @Test
- @DisplayName("비관적 락 - 100개 요청, 재고 100 -> 예상: 0")
- void pessimisticLock() throws InterruptedException {
-     // Given
-     Product product = new Product("한정판 신발", 100);
-     productRepository.save(product);
+	 * 동시성 제어 없음 - 실패 케이스
+	 */
+	@Test
+	@DisplayName("동시성 제어 없음 - 100개 요청, 재고 100 -> 예상: 0, 실제: 90+ (race condition)")
+	void noLock() throws InterruptedException {
+		// Given
+		Product product = new Product("한정판 신발", 100);
+		productRepository.save(product);
 
-     int threadCount = 100;
-     ExecutorService executorService = Executors.newFixedThreadPool(32);
-     CountDownLatch latch = new CountDownLatch(threadCount);
+		int threadCount = 100;
+		ExecutorService executorService = Executors.newFixedThreadPool(32);
+		CountDownLatch latch = new CountDownLatch(threadCount);
 
-     try {
-         // When
-         long startTime = System.currentTimeMillis();
+		try {
+			// When
+			for (int i = 0; i < threadCount; i++) {
+				executorService.submit(() -> {
+					try {
+						Product p = productRepository.findById(product.getId()).orElseThrow();
+						p.decreaseStock(1);
+						productRepository.save(p);
+					} finally {
+						latch.countDown();
+					}
+				});
+			}
 
-         for (int i = 0; i < threadCount; i++) {
-             executorService.submit(() -> {
-                 try {
-                     pessimisticLockService.decreaseStock(product.getId(), 1);
-                 } finally {
-                     latch.countDown();
-                 }
-             });
-         }
+			latch.await();
 
-         latch.await();
-         long endTime = System.currentTimeMillis();
+			// Then
+			Product result = productRepository.findById(product.getId()).orElseThrow();
+			System.out.println("동시성 제어 없음 - 최종 재고: " + result.getStock());
+			assertThat(result.getStock()).isGreaterThan(0); // Race condition 발생
+		} finally {
+			executorService.shutdown();
+		}
+	}
 
-         // Then
-         Product result = productRepository.findById(product.getId()).orElseThrow();
-         System.out.println("비관적 락 - 최종 재고: " + result.getStock());
-         System.out.println("비관적 락 - 소요 시간: " + (endTime - startTime) + "ms");
+	/**
+	 * 낙관적 락 - 재시도 포함
+	 */
+	@Test
+	@DisplayName("낙관적 락 - 100개 요청, 재고 100 -> 예상: 0")
+	void optimisticLock() throws InterruptedException {
+		// Given
+		Product product = new Product("한정판 신발", 100);
+		productRepository.save(product);
 
-         assertThat(result.getStock()).isEqualTo(0);
-     } finally {
-         executorService.shutdown();
-     }
- }
+		int threadCount = 100;
+		ExecutorService executorService = Executors.newFixedThreadPool(32);
+		CountDownLatch latch = new CountDownLatch(threadCount);
+		AtomicInteger successCount = new AtomicInteger(0);
+
+		try {
+			// When
+			long startTime = System.currentTimeMillis();
+
+			for (int i = 0; i < threadCount; i++) {
+				executorService.submit(() -> {
+					try {
+						optimisticLockService.decreaseStockWithRetry(product.getId(), 1);
+						successCount.incrementAndGet();
+					} catch (Exception e) {
+						System.out.println("실패: " + e.getMessage());
+					} finally {
+						latch.countDown();
+					}
+				});
+			}
+
+			latch.await();
+			long endTime = System.currentTimeMillis();
+
+			// Then
+			Product result = productRepository.findById(product.getId()).orElseThrow();
+			System.out.println("낙관적 락 - 최종 재고: " + result.getStock());
+			System.out.println("낙관적 락 - 성공 수: " + successCount.get());
+			System.out.println("낙관적 락 - 소요 시간: " + (endTime - startTime) + "ms");
+
+			assertThat(result.getStock()).isEqualTo(0);
+		} finally {
+			executorService.shutdown();
+		}
+	}
+
+	/**
+	 * 비관적 락
+	 */
+	@Test
+	@DisplayName("비관적 락 - 100개 요청, 재고 100 -> 예상: 0")
+	void pessimisticLock() throws InterruptedException {
+		// Given
+		Product product = new Product("한정판 신발", 100);
+		productRepository.save(product);
+
+		int threadCount = 100;
+		ExecutorService executorService = Executors.newFixedThreadPool(32);
+		CountDownLatch latch = new CountDownLatch(threadCount);
+
+		try {
+			// When
+			long startTime = System.currentTimeMillis();
+
+			for (int i = 0; i < threadCount; i++) {
+				executorService.submit(() -> {
+					try {
+						pessimisticLockService.decreaseStock(product.getId(), 1);
+					} finally {
+						latch.countDown();
+					}
+				});
+			}
+
+			latch.await();
+			long endTime = System.currentTimeMillis();
+
+			// Then
+			Product result = productRepository.findById(product.getId()).orElseThrow();
+			System.out.println("비관적 락 - 최종 재고: " + result.getStock());
+			System.out.println("비관적 락 - 소요 시간: " + (endTime - startTime) + "ms");
+
+			assertThat(result.getStock()).isEqualTo(0);
+		} finally {
+			executorService.shutdown();
+		}
+	}
+
+	/**
+	 * Redis 분산 락
+	 */
+	@Test
+	@DisplayName("Redis 분산 락 - 100개 요청, 재고 100 -> 예상: 0")
+	void redisLock() throws InterruptedException {
+		// Given
+		Product product = new Product("한정판 신발", 100);
+		productRepository.save(product);
+
+		int threadCount = 100;
+		ExecutorService executorService = Executors.newFixedThreadPool(32);
+		CountDownLatch latch = new CountDownLatch(threadCount);
+
+		try {
+			// When
+			long startTime = System.currentTimeMillis();
+
+			for (int i = 0; i < threadCount; i++) {
+				executorService.submit(() -> {
+					try {
+						redisLockService.decreaseStock(product.getId(), 1);
+					} finally {
+						latch.countDown();
+					}
+				});
+			}
+
+			latch.await();
+			long endTime = System.currentTimeMillis();
+
+			// Then
+			Product result = productRepository.findById(product.getId()).orElseThrow();
+			System.out.println("Redis 분산 락 - 최종 재고: " + result.getStock());
+			System.out.println("Redis 분산 락 - 소요 시간: " + (endTime - startTime) + "ms");
+
+			assertThat(result.getStock()).isEqualTo(0);
+		} finally {
+			executorService.shutdown();
+		}
+	}
 }
