@@ -16,6 +16,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import com.example.concurrency.domain.Product;
 import com.example.concurrency.repository.ProductRepository;
 import com.example.concurrency.service.OptimisticLockService;
+import com.example.concurrency.service.PessimisticLockService;
 
 @SpringBootTest
 class ConcurrencyControlTest {
@@ -25,6 +26,9 @@ class ConcurrencyControlTest {
     
     @Autowired
     private OptimisticLockService optimisticLockService;
+
+    @Autowired
+    private PessimisticLockService pessimisticLockService;
     
     @AfterEach
     void tearDown() {
@@ -116,4 +120,46 @@ class ConcurrencyControlTest {
             executorService.shutdown();
         }
     }
+
+	/**
+  * 비관적 락
+  */
+ @Test
+ @DisplayName("비관적 락 - 100개 요청, 재고 100 -> 예상: 0")
+ void pessimisticLock() throws InterruptedException {
+     // Given
+     Product product = new Product("한정판 신발", 100);
+     productRepository.save(product);
+
+     int threadCount = 100;
+     ExecutorService executorService = Executors.newFixedThreadPool(32);
+     CountDownLatch latch = new CountDownLatch(threadCount);
+
+     try {
+         // When
+         long startTime = System.currentTimeMillis();
+
+         for (int i = 0; i < threadCount; i++) {
+             executorService.submit(() -> {
+                 try {
+                     pessimisticLockService.decreaseStock(product.getId(), 1);
+                 } finally {
+                     latch.countDown();
+                 }
+             });
+         }
+
+         latch.await();
+         long endTime = System.currentTimeMillis();
+
+         // Then
+         Product result = productRepository.findById(product.getId()).orElseThrow();
+         System.out.println("비관적 락 - 최종 재고: " + result.getStock());
+         System.out.println("비관적 락 - 소요 시간: " + (endTime - startTime) + "ms");
+
+         assertThat(result.getStock()).isEqualTo(0);
+     } finally {
+         executorService.shutdown();
+     }
+ }
 }
